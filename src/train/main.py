@@ -4,7 +4,6 @@ import csv
 
 import torch
 import torch.nn as nn
-import wandb
 
 from config import *
 from data_loader import create_full_dataset
@@ -97,13 +96,17 @@ def main():
         model = nn.DataParallel(model)
     model.to(device)
 
-    run = wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=run_name,
-        group=run_id,
-        mode=args.wandb_mode,
-        config={
+    # Prepare wandb configuration to be passed to train_model
+    # Each fold will create its own wandb run with this config
+    wandb_config = {
+        'project': args.wandb_project,
+        'entity': args.wandb_entity,
+        'base_run_name': run_name,
+        'group': run_id,
+        'mode': args.wandb_mode,
+        'run_tag': args.run_tag,
+        'slurm_job_id': slurm_job_id,
+        'config': {
             'batch_size': batch_size,
             'epochs': epochs,
             'lr': lr,
@@ -122,7 +125,7 @@ def main():
             'results_dir': results_dir,
             'train_dir': train_dir,
         },
-    )
+    }
 
     train_model(
         model,
@@ -137,11 +140,9 @@ def main():
         batch_size=batch_size,
         early_stopping_patience=early_patience,
         weight_decay=args.weight_decay,
-        wandb_run=run,
+        wandb_config=wandb_config,
         run_id=run_id,
     )
-    run.save(log_path)
-    wandb.finish()
 
 
 if __name__ == '__main__':

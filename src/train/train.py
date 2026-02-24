@@ -1,7 +1,10 @@
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import StratifiedKFold
 from torch.nn import BCEWithLogitsLoss
@@ -37,7 +40,7 @@ def train_model(
     batch_size=32,
     early_stopping_patience=10,
     weight_decay=1e-4,
-    wandb_run=None,
+    wandb_config=None,
     run_id='',
 ):
     criterion = BCEWithLogitsLoss()
@@ -59,6 +62,30 @@ def train_model(
         print(f'Fold {fold+1}/{num_folds}')
         _print_split_stats('  Train_split', y[train_indices])
         _print_split_stats('  Val_split', y[val_indices])
+
+        # Initialize a separate wandb run for each fold
+        wandb_run = None
+        if wandb_config is not None:
+            slurm_job_id = wandb_config.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', 'local'))
+            fold_run_name = f"{wandb_config.get('base_run_name', 'neuroxvocal')}_fold{fold+1}"
+            fold_tags = [f"slurm_job_{slurm_job_id}"]
+            if wandb_config.get('run_tag'):
+                fold_tags.append(wandb_config['run_tag'])
+
+            wandb_run = wandb.init(
+                project=wandb_config.get('project'),
+                entity=wandb_config.get('entity'),
+                name=fold_run_name,
+                group=wandb_config.get('group', run_id),
+                mode=wandb_config.get('mode', 'online'),
+                tags=fold_tags,
+                config={
+                    **wandb_config.get('config', {}),
+                    'fold': fold + 1,
+                    'num_folds': num_folds,
+                },
+                reinit=True,
+            )
 
         train_subset = torch.utils.data.Subset(full_dataset, train_indices)
         val_subset = torch.utils.data.Subset(full_dataset, val_indices)
@@ -208,3 +235,8 @@ def train_model(
             print(train_report)
             print("Validation Classification Report:")
             print(val_report)
+
+        # Finish the wandb run for this fold
+        if wandb_run is not None:
+            wandb_run.save(log_path)
+            wandb.finish()

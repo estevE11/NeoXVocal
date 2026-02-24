@@ -1,56 +1,13 @@
+import argparse
 import os
 import sys
-import argparse
+
 import librosa
 import numpy as np
 import pandas as pd
 import parselmouth
 from scipy.signal import find_peaks
 
-'''
-Descriptions of Features:
-
-- duration: Total length of the audio recording in seconds.
-- total_speech_time: Total time the patient is speaking (excluding pauses).
-- speech_pause_ratio: Ratio of speaking time to total recording duration.
-- num_pauses: Number of pauses detected in the speech.
-- total_pause_duration: Cumulative duration of all pauses.
-- avg_pause_duration: Average duration of pauses.
-- max_pause_duration: Duration of the longest pause.
-- pause_duration_std: Standard deviation of pause durations.
-- pitch_mean: Mean of the fundamental frequency (pitch).
-- pitch_std: Standard deviation of the fundamental frequency.
-- pitch_range: Range (max - min) of the fundamental frequency.
-- intensity_mean: Mean of speech intensity (loudness).
-- intensity_std: Standard deviation of speech intensity.
-- intensity_range: Range of speech intensity.
-- articulation_rate: Rate of speech excluding pauses.
-- speaking_rate: Estimated syllables per second during speaking time.
-- spectral_centroid_mean: Mean spectral centroid (center of mass of the spectrum).
-- spectral_centroid_std: Standard deviation of spectral centroid.
-- zcr_mean: Mean zero-crossing rate (measure of signal noisiness).
-- zcr_std: Standard deviation of zero-crossing rate.
-- jitter_local: Local jitter value (variability in pitch frequency).
-- shimmer_local: Local shimmer value (variability in amplitude).
-- hnr_mean: Mean harmonics-to-noise ratio (measure of voice hoarseness).
-- formant_1_mean: Mean of the first formant frequency.
-- formant_1_std: Standard deviation of the first formant frequency.
-- formant_2_mean: Mean of the second formant frequency.
-- formant_2_std: Standard deviation of the second formant frequency.
-- formant_3_mean: Mean of the third formant frequency.
-- formant_3_std: Standard deviation of the third formant frequency.
-- mfcc_1_mean to mfcc_13_mean: Mean values of the first 13 MFCCs.
-- mfcc_1_std to mfcc_13_std: Standard deviation of the first 13 MFCCs.
-
-Command-Line Arguments:
-
-- data_path: Path to the directory containing .wav files.
-- --output_csv: Output CSV file name where features will be saved. Default is 'audio_features.csv'.
-- --sample_rate: Sample rate for audio processing in Hz. Default is 22050.
-- --frame_length: Frame length for audio analysis in number of samples. Default is 2048.
-- --hop_length: Hop length for audio analysis in number of samples. Default is 512.
-- --silence_threshold: Silence threshold as a fraction (e.g., 0.1 for 10th percentile). Used for silence detection. Default is 0.1.
-'''
 
 def extract_features(audio_path, sr=22050, frame_length=2048, hop_length=512, silence_threshold=0.1):
     y, sr = librosa.load(audio_path, sr=sr)
@@ -64,6 +21,7 @@ def extract_features(audio_path, sr=22050, frame_length=2048, hop_length=512, si
     speech_frames = ~silence_frames
     total_speech_frames = np.sum(speech_frames)
     total_speech_time = total_speech_frames * hop_length / sr
+
     silence_durations = []
     current_silence = 0
     for is_silence in silence_frames:
@@ -72,11 +30,13 @@ def extract_features(audio_path, sr=22050, frame_length=2048, hop_length=512, si
         elif current_silence > 0:
             silence_durations.append(current_silence * hop_length / sr)
             current_silence = 0
+
     num_pauses = len(silence_durations)
     total_pause_duration = sum(silence_durations)
     avg_pause_duration = np.mean(silence_durations) if silence_durations else 0
     max_pause_duration = max(silence_durations) if silence_durations else 0
     pause_duration_std = np.std(silence_durations) if silence_durations else 0
+
     pitches, magnitudes = librosa.piptrack(y=y, sr=sr, n_fft=frame_length, hop_length=hop_length)
     pitches = pitches.flatten()
     magnitudes = magnitudes.flatten()
@@ -127,8 +87,9 @@ def extract_features(audio_path, sr=22050, frame_length=2048, hop_length=512, si
             f1.append(formant.get_value_at_time(1, t))
             f2.append(formant.get_value_at_time(2, t))
             f3.append(formant.get_value_at_time(3, t))
-        except:
+        except Exception:
             continue
+
     f1 = np.array(f1)
     f2 = np.array(f2)
     f3 = np.array(f3)
@@ -179,29 +140,29 @@ def extract_features(audio_path, sr=22050, frame_length=2048, hop_length=512, si
 
 def process_audio_files(data_path, output_csv, sr, frame_length, hop_length, silence_threshold):
     all_features = []
-    for root, dirs, files in os.walk(data_path):
+    for root, _, files in os.walk(data_path):
         for file in files:
-            if file.lower().endswith('.wav'):
+            if not file.lower().endswith('.wav'):
+                continue
+            audio_path = os.path.join(root, file)
+            patient_id = os.path.splitext(file)[0]
+            print(f'Processing {audio_path}...')
+            try:
+                features = extract_features(
+                    audio_path,
+                    sr=sr,
+                    frame_length=frame_length,
+                    hop_length=hop_length,
+                    silence_threshold=silence_threshold,
+                )
+                features['patient_id'] = patient_id
+                features['class'] = os.path.basename(root)
+                all_features.append(features)
+            except Exception as e:
+                print(f'Error processing {audio_path}: {e}')
 
-                audio_path = os.path.join(root, file)
-                patient_id = os.path.splitext(file)[0]
-                print(f"Processing {audio_path}...")
-                try:
-                    features = extract_features(
-                        audio_path,
-                        sr=sr,
-                        frame_length=frame_length,
-                        hop_length=hop_length,
-                        silence_threshold=silence_threshold
-                    )
-                    features['patient_id'] = patient_id
-                    features['class'] = os.path.basename(root) 
-                    all_features.append(features)
-                except Exception as e:
-                    print(f"Error processing {audio_path}: {e}")
-    df = pd.DataFrame(all_features)
-    df.to_csv(output_csv, index=False)
-    print(f"Features saved to {output_csv}")
+    pd.DataFrame(all_features).to_csv(output_csv, index=False)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Extract audio features for dementia detection.")
@@ -216,6 +177,10 @@ def main():
     if not os.path.exists(args.data_path):
         print(f"Error: The directory {args.data_path} does not exist.")
         sys.exit(1)
+
+    if os.path.exists(args.output_csv) and os.path.getsize(args.output_csv) > 0:
+        print(f'Skipping: output already exists at {args.output_csv}')
+        return
 
     process_audio_files(
         data_path=args.data_path,

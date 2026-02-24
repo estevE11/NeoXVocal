@@ -8,3 +8,4 @@ results/
 app/recordings/*
 references.txt
 literature_pdf/
+.venv/

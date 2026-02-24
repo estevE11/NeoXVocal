@@ -7,6 +7,8 @@ OUT_BASE="${ADRESSO_ROOT}/processed_data/diagnosis"
 
 WHISPER_MODEL="${WHISPER_MODEL:-base}"
 W2V2_MODEL="${W2V2_MODEL:-facebook/wav2vec2-base-960h}"
+W2V2_CHUNK_SECONDS="${W2V2_CHUNK_SECONDS:-20}"
+W2V2_DEVICE="${W2V2_DEVICE:-auto}"
 
 train_ad="${ADRESSO21}/train/audio/ad"
 train_cn="${ADRESSO21}/train/audio/cn"
@@ -51,19 +53,19 @@ echo "== Train AD =="
 "$PYTHON" src/data_extraction/transcribe_audio.py "$train_ad" --output_dir "$out_train_ad" --model "$WHISPER_MODEL"
 "$PYTHON" src/data_processing/preprocess_texts.py "$out_train_ad" "$out_train_ad"
 run_if_missing "$out_train_ad/audio_features_ad.csv" "$PYTHON" src/data_extraction/extract_audio_features.py "$train_ad" --output_csv "$out_train_ad/audio_features_ad.csv"
-run_if_missing "$out_train_ad/audio_embeddings_ad.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$train_ad" --output_csv "$out_train_ad/audio_embeddings_ad.csv" --model_name "$W2V2_MODEL"
+run_if_missing "$out_train_ad/audio_embeddings_ad.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$train_ad" --output_csv "$out_train_ad/audio_embeddings_ad.csv" --model_name "$W2V2_MODEL" --chunk_seconds "$W2V2_CHUNK_SECONDS" --device "$W2V2_DEVICE"
 
 echo "== Train CN =="
 "$PYTHON" src/data_extraction/transcribe_audio.py "$train_cn" --output_dir "$out_train_cn" --model "$WHISPER_MODEL"
 "$PYTHON" src/data_processing/preprocess_texts.py "$out_train_cn" "$out_train_cn"
 run_if_missing "$out_train_cn/audio_features_cn.csv" "$PYTHON" src/data_extraction/extract_audio_features.py "$train_cn" --output_csv "$out_train_cn/audio_features_cn.csv"
-run_if_missing "$out_train_cn/audio_embeddings_cn.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$train_cn" --output_csv "$out_train_cn/audio_embeddings_cn.csv" --model_name "$W2V2_MODEL"
+run_if_missing "$out_train_cn/audio_embeddings_cn.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$train_cn" --output_csv "$out_train_cn/audio_embeddings_cn.csv" --model_name "$W2V2_MODEL" --chunk_seconds "$W2V2_CHUNK_SECONDS" --device "$W2V2_DEVICE"
 
 echo "== Test-dist (unlabeled) =="
 "$PYTHON" src/data_extraction/transcribe_audio.py "$test_audio" --output_dir "$out_test" --model "$WHISPER_MODEL"
 "$PYTHON" src/data_processing/preprocess_texts.py "$out_test" "$out_test"
 run_if_missing "$out_test/audio_features_test.csv" "$PYTHON" src/data_extraction/extract_audio_features.py "$test_audio" --output_csv "$out_test/audio_features_test.csv"
-run_if_missing "$out_test/audio_embeddings_test.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$test_audio" --output_csv "$out_test/audio_embeddings_test.csv" --model_name "$W2V2_MODEL"
+run_if_missing "$out_test/audio_embeddings_test.csv" "$PYTHON" src/data_extraction/extract_audio_embeddings.py "$test_audio" --output_csv "$out_test/audio_embeddings_test.csv" --model_name "$W2V2_MODEL" --chunk_seconds "$W2V2_CHUNK_SECONDS" --device "$W2V2_DEVICE"
 
 echo "== Preprocess (standardize) CSVs =="
 if [[ ! -s "$scaler_audio_features" || ! -s "$scaler_audio_embeddings" ]]; then

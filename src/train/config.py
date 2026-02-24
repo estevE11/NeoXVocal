@@ -1,13 +1,13 @@
 import os
 
 # Paths
-BASE_DIR = 'path/to/processed_data/'
-AD_TEXT_DIR = 'path/to/processed_data/ad/'
-CN_TEXT_DIR = 'path/to/processed_data/cn/'
-AD_CSV = 'path/to/processed_data/ad/audio_features_ad.csv'
-CN_CSV = 'path/to/processed_data/cn/audio_features_cn.csv'
-AD_EMBEDDING_CSV = 'path/to/processed_data/ad/audio_embeddings_ad.csv'
-CN_EMBEDDING_CSV = 'path/to/processed_data/cn/audio_embeddings_cn.csv'
+BASE_DIR = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train'
+AD_TEXT_DIR = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/ad'
+CN_TEXT_DIR = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/cn'
+AD_CSV = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/ad/audio_features_ad.csv'
+CN_CSV = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/cn/audio_features_cn.csv'
+AD_EMBEDDING_CSV = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/ad/audio_embeddings_ad.csv'
+CN_EMBEDDING_CSV = '/home/usuaris/veussd/roger.esteve.sanchez/adresso/processed_data/diagnosis/train/cn/audio_embeddings_cn.csv'
 
 # Model configuration
 TEXT_EMBEDDING_MODEL = 'microsoft/deberta-v3-base'

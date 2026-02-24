@@ -47,7 +47,7 @@ srun python -u src/train/main.py \
   --train_dir "$TRAIN_DIR" \
   --results_dir "$RESULTS_DIR" \
   --batch_size 8 \
-  --epochs 3 \
+  --epochs 25 \
   --lr 1e-4 \
   --num_folds 5 \
   --early_stopping_patience 10 \

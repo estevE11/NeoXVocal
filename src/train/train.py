@@ -40,6 +40,9 @@ def train_model(
     batch_size=32,
     early_stopping_patience=10,
     weight_decay=1e-4,
+    gradient_clip_norm=1.0,
+    scheduler_factor=0.5,
+    scheduler_patience=5,
     wandb_config=None,
     run_id='',
 ):
@@ -99,7 +102,7 @@ def train_model(
             model.load_state_dict(initial_state)
 
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=scheduler_factor, patience=scheduler_patience)
 
         best_val_loss = float('inf')
         epochs_no_improve = 0
@@ -126,7 +129,7 @@ def train_model(
                 print("--------------------------------")
                 loss = criterion(outputs, label.float())
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip_norm)
                 optimizer.step()
 
                 running_loss += loss.item()

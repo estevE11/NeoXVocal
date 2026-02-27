@@ -9,3 +9,5 @@ app/recordings/*
 references.txt
 literature_pdf/
 .venv/
+.cache/
+logs/

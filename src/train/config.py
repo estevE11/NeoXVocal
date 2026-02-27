@@ -39,7 +39,7 @@ WEIGHT_DECAY = 'Weight decay (L2 regularization) rate'
 NUM_FOLDS = 'Number of folds for cross-validation'
 SAVE_BEST_MODEL = 'Flag to save only the best-performing model (True/False)'
 EARLY_STOPPING_PATIENCE = 'Number of epochs with no improvement to trigger early stopping'
-
+ 
 # =============================================================================
 # Model Architecture Defaults
 # These values are used if not overridden via CLI arguments

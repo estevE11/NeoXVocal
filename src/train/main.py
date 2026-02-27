@@ -112,6 +112,8 @@ def main():
                            help='Weights & Biases logging mode')
     log_group.add_argument('--run_tag', type=str, default='',
                            help='Custom tag for the run')
+    log_group.add_argument('--no_save_best_model', action='store_false', dest='save_best_model', default=True,
+                           help='Disable saving the best performing model based on validation loss')
     
     # === Metadata (for tracking preprocessing) ===
     meta_group = parser.add_argument_group('Metadata (for tracking)')
@@ -249,7 +251,7 @@ def main():
         save_model_path,
         device,
         num_folds,
-        SAVE_BEST_MODEL,
+        args.save_best_model,
         batch_size=batch_size,
         early_stopping_patience=early_patience,
         weight_decay=args.weight_decay,

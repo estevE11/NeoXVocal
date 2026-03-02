@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -45,6 +46,7 @@ def train_model(
     scheduler_patience=5,
     wandb_config=None,
     run_id='',
+    run_test_inference=True,
 ):
     criterion = BCEWithLogitsLoss()
     if hasattr(full_dataset, 'datasets') and len(getattr(full_dataset, 'datasets', [])) == 2:
@@ -60,6 +62,13 @@ def train_model(
     # IMPORTANT: reset *all* parameters between folds (including DeBERTa).
     base_model = model.module if isinstance(model, nn.DataParallel) else model
     initial_state = _clone_state_dict(base_model)
+
+    # Track best fold for test inference
+    best_fold_info = {
+        'best_fold_num': None,
+        'best_val_loss': float('inf'),
+        'best_model_path': None
+    }
 
     for fold, (train_indices, val_indices) in enumerate(kfold.split(np.arange(len(full_dataset)), y)):
         print(f'Fold {fold+1}/{num_folds}')
@@ -93,8 +102,20 @@ def train_model(
         train_subset = torch.utils.data.Subset(full_dataset, train_indices)
         val_subset = torch.utils.data.Subset(full_dataset, val_indices)
 
-        train_loader = torch.utils.data.DataLoader(train_subset, batch_size=batch_size, shuffle=True)
-        val_loader = torch.utils.data.DataLoader(val_subset, batch_size=batch_size, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(
+            train_subset, 
+            batch_size=batch_size, 
+            shuffle=True, 
+            num_workers=0,
+            pin_memory=True
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_subset, 
+            batch_size=batch_size, 
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True
+        )
 
         if isinstance(model, nn.DataParallel):
             model.module.load_state_dict(initial_state)
@@ -123,10 +144,6 @@ def train_model(
                 label = label.to(device)
 
                 outputs = model(text_data, audio_data, embedding_data)
-                print("train--------------------------------")
-                print(outputs)
-                print(label)
-                print("--------------------------------")
                 loss = criterion(outputs, label.float())
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip_norm)
@@ -214,6 +231,12 @@ def train_model(
                         torch.save(model.state_dict(), best_model_path)
                     if wandb_run is not None:
                         wandb_run.save(best_model_path)
+                    
+                    # Track globally best fold
+                    if val_loss < best_fold_info['best_val_loss']:
+                        best_fold_info['best_fold_num'] = fold + 1
+                        best_fold_info['best_val_loss'] = val_loss
+                        best_fold_info['best_model_path'] = best_model_path
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= early_stopping_patience:
@@ -243,3 +266,94 @@ def train_model(
         if wandb_run is not None:
             wandb_run.save(log_path)
             wandb.finish()
+    
+    return best_fold_info
+
+
+def evaluate_on_test_set(model, test_dataset, best_model_path, device, batch_size, wandb_config, run_id, results_dir):
+    """Evaluate best model on test set and log to wandb"""
+    criterion = BCEWithLogitsLoss()
+    
+    # Load best model weights
+    if isinstance(model, nn.DataParallel):
+        model.module.load_state_dict(torch.load(best_model_path))
+    else:
+        model.load_state_dict(torch.load(best_model_path))
+    
+    model.eval()
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, 
+        batch_size=batch_size, 
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True
+    )
+    
+    # Run inference
+    test_loss = 0.0
+    all_outputs = []
+    all_labels = []
+    all_patient_ids = []
+    
+    with torch.no_grad():
+        for (text_data, audio_data, embedding_data, label) in tqdm(test_loader, desc='Test Inference'):
+            text_data = {key: value.to(device) for key, value in text_data.items()}
+            audio_data = audio_data.to(device)
+            embedding_data = embedding_data.to(device)
+            label = label.to(device)
+            
+            outputs = model(text_data, audio_data, embedding_data)
+            loss = criterion(outputs, label.float())
+            
+            test_loss += loss.item()
+            all_outputs.extend(outputs.detach().cpu().numpy())
+            all_labels.extend(label.cpu().numpy())
+    
+    # Calculate metrics
+    test_loss = test_loss / len(test_loader)
+    predictions = (np.array(all_outputs) > 0).astype(int)
+    test_acc = accuracy_score(np.array(all_labels), predictions)
+    test_f1 = f1_score(np.array(all_labels), predictions, average='binary', zero_division=0)
+    
+    # Save predictions CSV
+    test_data_df = test_dataset.data
+    predictions_df = pd.DataFrame({
+        'ID': test_data_df['patient_id'].values,
+        'Prediction': predictions.flatten()
+    })
+    predictions_csv_path = os.path.join(results_dir, f'test_predictions_{run_id}.csv')
+    predictions_df.to_csv(predictions_csv_path, index=False)
+    
+    # Log to wandb
+    if wandb_config is not None:
+        slurm_job_id = wandb_config.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', 'local'))
+        test_run_name = f"{wandb_config.get('base_run_name', 'neuroxvocal')}_test_final"
+        test_tags = [f"slurm_job_{slurm_job_id}", "final_test"]
+        if wandb_config.get('run_tag'):
+            test_tags.append(wandb_config['run_tag'])
+        
+        test_run = wandb.init(
+            project=wandb_config.get('project'),
+            entity=wandb_config.get('entity'),
+            name=test_run_name,
+            group=wandb_config.get('group', run_id),
+            mode=wandb_config.get('mode', 'online'),
+            tags=test_tags,
+            config=wandb_config.get('config', {}),
+            reinit=True,
+        )
+        
+        test_run.log({
+            'test_loss': test_loss,
+            'test_acc': test_acc,
+            'test_f1': test_f1,
+        })
+        
+        test_run.save(predictions_csv_path)
+        wandb.finish()
+    
+    return {
+        'test_loss': test_loss,
+        'test_acc': test_acc,
+        'test_f1': test_f1,
+    }

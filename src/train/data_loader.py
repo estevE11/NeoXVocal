@@ -61,7 +61,9 @@ class DementiaDataset(Dataset):
             max_length=self.max_length,
             return_tensors='pt'
         )
-
+        
+        # Squeeze out the batch dimension added by return_tensors='pt'
+        text_tokens = {key: value.squeeze(0) for key, value in text_tokens.items()}
         
         audio_feature_columns = [
             col for col in self.audio_data.columns if col not in ('patient_id', 'class')
@@ -165,3 +167,69 @@ def create_testdist_dataset(testdist_dir, audio_csv, embedding_csv):
         embedding_csv_path=embedding_csv,
         text_dir=testdist_dir,
     )
+
+
+def create_test_dataset(test_dir, audio_csv, embedding_csv, labels_csv, tokenizer_model=TEXT_EMBEDDING_MODEL):
+    """Create test dataset with ground truth labels from task1.csv"""
+    # Read labels
+    labels_df = pd.read_csv(labels_csv)
+    labels_dict = {}
+    for _, row in labels_df.iterrows():
+        patient_id = row['ID']
+        label = 1 if row['Dx'] == 'ProbableAD' else 0
+        labels_dict[patient_id] = label
+    
+    # Read audio and embedding data
+    audio_data = pd.read_csv(audio_csv)
+    embedding_data = pd.read_csv(embedding_csv)
+    
+    # Merge on patient_id
+    data = pd.merge(audio_data, embedding_data, on='patient_id', suffixes=('_audio', '_embedding'))
+    
+    # Add labels
+    data['label'] = data['patient_id'].map(labels_dict)
+    
+    # Create dataset class instance
+    class TestDatasetWithLabels(Dataset):
+        def __init__(self, data, audio_data, embedding_data, text_dir, tokenizer_model, max_length=512):
+            self.data = data
+            self.audio_data = audio_data
+            self.embedding_data = embedding_data
+            self.text_dir = text_dir
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
+            self.max_length = max_length
+        
+        def __len__(self):
+            return len(self.data)
+        
+        def __getitem__(self, idx):
+            data_row = self.data.iloc[idx]
+            patient_id = data_row['patient_id']
+            text_file_path = os.path.join(self.text_dir, f'{patient_id}.txt')
+            
+            with open(text_file_path, 'r') as file:
+                text = file.read()
+            
+            text_tokens = self.tokenizer(
+                text,
+                padding='max_length',
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors='pt'
+            )
+            
+            # Squeeze out the batch dimension added by return_tensors='pt'
+            text_tokens = {key: value.squeeze(0) for key, value in text_tokens.items()}
+            
+            audio_feature_columns = [col for col in self.audio_data.columns if col not in ('patient_id', 'class')]
+            embedding_feature_columns = [col for col in self.embedding_data.columns if col != 'patient_id']
+            audio_features = data_row[audio_feature_columns].values.astype(float)
+            embedding_features = data_row[embedding_feature_columns].values.astype(float)
+            label = torch.tensor(data_row['label'], dtype=torch.float32)
+            
+            audio_tensor = torch.tensor(audio_features, dtype=torch.float32)
+            embedding_tensor = torch.tensor(embedding_features, dtype=torch.float32)
+            
+            return text_tokens, audio_tensor, embedding_tensor, label
+    
+    return TestDatasetWithLabels(data, audio_data, embedding_data, test_dir, tokenizer_model)

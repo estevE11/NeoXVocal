@@ -101,6 +101,23 @@ def main():
                             choices=['first', 'mean', 'max', 'cls_token'],
                             help='How to pool transformer output')
     
+    # === Cross-attention configuration ===
+    xattn_group = parser.add_argument_group('Cross-attention configuration')
+    xattn_group.add_argument('--cross_attention_mode', type=str, default=None,
+                             choices=['audio_to_text', 'text_to_audio', 'gated_bidirectional'],
+                             help='Cross-attention mode (omit for original self-attention-only behavior)')
+    xattn_group.add_argument('--cross_attention_num_heads', type=int, default=8,
+                             help='Number of heads in cross-attention')
+    xattn_group.add_argument('--cross_attention_num_layers', type=int, default=1,
+                             help='Number of stacked cross-attention layers')
+    xattn_group.add_argument('--cross_attention_dropout', type=float, default=0.1,
+                             help='Dropout in cross-attention')
+    xattn_group.add_argument('--cross_attention_placement', type=str, default='before',
+                             choices=['before', 'replace', 'hybrid'],
+                             help='Where cross-attention sits: before/replace/hybrid self-attention')
+    xattn_group.add_argument('--cross_attention_gate_init', type=float, default=0.5,
+                             help='Initial gate value for gated_bidirectional mode')
+
     # === Logging and tracking ===
     log_group = parser.add_argument_group('Logging and tracking')
     log_group.add_argument('--wandb_project', type=str, default=os.environ.get('WANDB_PROJECT', 'NeoXVocal'),
@@ -114,6 +131,8 @@ def main():
                            help='Custom tag for the run')
     log_group.add_argument('--no_save_best_model', action='store_false', dest='save_best_model', default=True,
                            help='Disable saving the best performing model based on validation loss')
+    log_group.add_argument('--no_test_inference', action='store_true',
+                           help='Disable final test set evaluation after cross-validation')
     
     # === Metadata (for tracking preprocessing) ===
     meta_group = parser.add_argument_group('Metadata (for tracking)')
@@ -200,6 +219,13 @@ def main():
         'freeze_text_model_layers': args.freeze_text_model_layers,
         # Pooling strategy
         'pooling_strategy': args.pooling_strategy,
+        # Cross-attention configuration
+        'cross_attention_mode': args.cross_attention_mode,
+        'cross_attention_num_heads': args.cross_attention_num_heads,
+        'cross_attention_num_layers': args.cross_attention_num_layers,
+        'cross_attention_dropout': args.cross_attention_dropout,
+        'cross_attention_placement': args.cross_attention_placement,
+        'cross_attention_gate_init': args.cross_attention_gate_init,
     }
 
     model = NeuroXVocal(**model_config)
@@ -242,7 +268,7 @@ def main():
         },
     }
 
-    train_model(
+    best_fold_info = train_model(
         model,
         full_dataset,
         epochs,
@@ -261,6 +287,59 @@ def main():
         wandb_config=wandb_config,
         run_id=run_id,
     )
+
+    # === Final Test Set Evaluation ===
+    if not args.no_test_inference and args.save_best_model:
+        print("\n" + "="*50)
+        print("Running final test set evaluation...")
+        print("="*50)
+        
+        # Paths
+        test_dir = os.path.join(os.path.dirname(train_dir), 'test-dist')
+        test_audio_csv = os.path.join(test_dir, 'audio_features_test.csv')
+        test_embedding_csv = os.path.join(test_dir, 'audio_embeddings_test.csv')
+        test_labels_csv = 'task1.csv'  # In project root
+        
+        # Create test dataset
+        from data_loader import create_test_dataset
+        test_dataset = create_test_dataset(
+            test_dir=test_dir,
+            audio_csv=test_audio_csv,
+            embedding_csv=test_embedding_csv,
+            labels_csv=test_labels_csv,
+            tokenizer_model=text_embedding_model
+        )
+        
+        # Print test set info
+        print(f"Test set size: {len(test_dataset)}")
+        print(f"Best model: Fold {best_fold_info['best_fold_num']}")
+        print(f"Best validation loss: {best_fold_info['best_val_loss']:.4f}")
+        print(f"Model path: {best_fold_info['best_model_path']}")
+        
+        # Run test inference
+        from train import evaluate_on_test_set
+        test_metrics = evaluate_on_test_set(
+            model=model,
+            test_dataset=test_dataset,
+            best_model_path=best_fold_info['best_model_path'],
+            device=device,
+            batch_size=batch_size,
+            wandb_config=wandb_config,
+            run_id=run_id,
+            results_dir=results_dir,
+        )
+        
+        # Print results
+        print("\n" + "="*50)
+        print("FINAL TEST SET RESULTS")
+        print("="*50)
+        print(f"Test Loss: {test_metrics['test_loss']:.4f}")
+        print(f"Test Accuracy: {test_metrics['test_acc']:.4f}")
+        print(f"Test F1 Score: {test_metrics['test_f1']:.4f}")
+        print("="*50)
+        
+    elif not args.save_best_model:
+        print("\nSkipping test inference (--no_save_best_model is set)")
 
 
 if __name__ == '__main__':

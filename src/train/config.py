@@ -31,14 +31,14 @@ CUDA = True
 # =============================================================================
 # Training Hyperparameters (set via CLI or here)
 # =============================================================================
-# These are placeholder strings - set actual values via CLI args or replace here
-BATCH_SIZE = 'Desired number of samples per training batch'
-EPOCHS = 'Total number of training epochs'
-LEARNING_RATE = 'Learning rate for the optimizer'
-WEIGHT_DECAY = 'Weight decay (L2 regularization) rate'
-NUM_FOLDS = 'Number of folds for cross-validation'
-SAVE_BEST_MODEL = 'Flag to save only the best-performing model (True/False)'
-EARLY_STOPPING_PATIENCE = 'Number of epochs with no improvement to trigger early stopping'
+# Values from original paper
+BATCH_SIZE = 16  # Desired number of samples per training batch
+EPOCHS = 200  # Total number of training epochs
+LEARNING_RATE = 1e-3  # Learning rate for the optimizer
+WEIGHT_DECAY = 1e-5  # Weight decay (L2 regularization) rate
+NUM_FOLDS = 5  # Number of folds for cross-validation
+SAVE_BEST_MODEL = True  # Flag to save only the best-performing model (True/False)
+EARLY_STOPPING_PATIENCE = 20  # Number of epochs with no improvement to trigger early stopping
  
 # =============================================================================
 # Model Architecture Defaults
@@ -68,6 +68,14 @@ FREEZE_TEXT_MODEL_LAYERS = None     # Freeze N layers from bottom (None = don't 
 
 # --- Pooling ---
 POOLING_STRATEGY = 'first'          # 'first', 'mean', 'max', 'cls_token'
+
+# --- Cross-Attention (None = disabled, original self-attention-only behavior) ---
+CROSS_ATTENTION_MODE = None         # None | 'audio_to_text' | 'text_to_audio' | 'gated_bidirectional'
+CROSS_ATTENTION_NUM_HEADS = 8       # Attention heads for cross-attention
+CROSS_ATTENTION_NUM_LAYERS = 1      # Stacked cross-attention layers
+CROSS_ATTENTION_DROPOUT = 0.1       # Dropout in cross-attention
+CROSS_ATTENTION_PLACEMENT = 'before'  # 'before' | 'replace' | 'hybrid'
+CROSS_ATTENTION_GATE_INIT = 0.5     # Initial gate value for gated_bidirectional
 
 # --- Training Schedule ---
 GRADIENT_CLIP_NORM = 1.0            # Max norm for gradient clipping

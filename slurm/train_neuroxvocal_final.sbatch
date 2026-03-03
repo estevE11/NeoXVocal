@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=train
+#SBATCH --job-name=train_final
 #SBATCH --output=/home/usuaris/veussd/roger.esteve.sanchez/NeoXVocal/results/logs/sbatch/neuroxvocal/%x_%j.txt
 #SBATCH -A veu
 #SBATCH -p veu
@@ -46,10 +46,7 @@ AUDIO_EMBEDDING_MODEL="${AUDIO_EMBEDDING_MODEL:-facebook/wav2vec2-base-960h}"
 mkdir -p "$RESULTS_DIR" "/home/usuaris/veussd/roger.esteve.sanchez/NeoXVocal/results/logs/sbatch/neuroxvocal"
 
 # ===================================
-# Training Configuration
-# ===================================
-# Training Hyperparameters: batch_size=16, lr=1e-3, weight_decay=1e-5, epochs=200 (from original paper)
-# Model Architecture: Matches paper (2 transformer layers, 8 heads, 1 classifier layer with width 384)
+# Final Training Configuration (Based on job2390221)
 # ===================================
 
 srun python -u src/train/main.py \
@@ -57,18 +54,17 @@ srun python -u src/train/main.py \
   --results_dir "$RESULTS_DIR" \
   --batch_size 8 \
   --epochs 200 \
-  --lr 5e-5 \
+  --lr 0.00002 \
   --num_folds 5 \
-  --early_stopping_patience 20 \
-  --weight_decay 1e-3 \
+  --early_stopping_patience 15 \
+  --weight_decay 1e-2 \
   --text_embedding_model 'microsoft/deberta-v3-base' \
   --transformer_num_layers 2 \
   --transformer_num_heads 8 \
-  --transformer_dropout 0.4 \
+  --transformer_dropout 0.45 \
   --classifier_hidden_layers 1 \
   --classifier_hidden_width 384 \
   --classifier_dropout 0.5 \
-  --classifier_activation gelu \
   --wandb_project "$WANDB_PROJECT" \
   ${WANDB_ENTITY:+--wandb_entity "$WANDB_ENTITY"} \
   --wandb_mode "$WANDB_MODE" \
@@ -76,9 +72,9 @@ srun python -u src/train/main.py \
   --asr_model "$ASR_MODEL" \
   --cross_attention_mode gated_bidirectional \
   --cross_attention_placement before \
-  --cross_attention_num_heads 4 \
+  --cross_attention_num_heads 8 \
   --cross_attention_num_layers 2 \
-  --cross_attention_dropout 0.3 \
+  --cross_attention_dropout 0.5 \
   --cross_attention_gate_init 0.5 \
-  --run_tag "xattn_gated_refined"
-
+  --run_tag "xattn_gated_regularized_final" \
+  --final_train

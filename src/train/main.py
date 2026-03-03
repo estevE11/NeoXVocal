@@ -8,7 +8,7 @@ import torch.nn as nn
 from config import *
 from data_loader import create_full_dataset
 from models import NeuroXVocal
-from train import train_model
+from train import train_model, train_final_model
 
 
 def _infer_num_audio_features(audio_csv_path: str) -> int:
@@ -133,6 +133,8 @@ def main():
                            help='Disable saving the best performing model based on validation loss')
     log_group.add_argument('--no_test_inference', action='store_true',
                            help='Disable final test set evaluation after cross-validation')
+    log_group.add_argument('--final_train', action='store_true',
+                           help='Train on the entire training set without cross-validation and evaluate on test set')
     
     # === Metadata (for tracking preprocessing) ===
     meta_group = parser.add_argument_group('Metadata (for tracking)')
@@ -268,47 +270,71 @@ def main():
         },
     }
 
-    best_fold_info = train_model(
-        model,
-        full_dataset,
-        epochs,
-        lr,
-        log_path,
-        save_model_path,
-        device,
-        num_folds,
-        args.save_best_model,
-        batch_size=batch_size,
-        early_stopping_patience=early_patience,
-        weight_decay=args.weight_decay,
-        gradient_clip_norm=args.gradient_clip_norm,
-        scheduler_factor=args.scheduler_factor,
-        scheduler_patience=args.scheduler_patience,
-        wandb_config=wandb_config,
-        run_id=run_id,
+    # === Prepare Test Dataset ===
+    test_dir = os.path.join(os.path.dirname(train_dir), 'test-dist')
+    test_audio_csv = os.path.join(test_dir, 'audio_features_test.csv')
+    test_embedding_csv = os.path.join(test_dir, 'audio_embeddings_test.csv')
+    test_labels_csv = 'task1.csv'  # In project root
+    
+    from data_loader import create_test_dataset
+    test_dataset = create_test_dataset(
+        test_dir=test_dir,
+        audio_csv=test_audio_csv,
+        embedding_csv=test_embedding_csv,
+        labels_csv=test_labels_csv,
+        tokenizer_model=text_embedding_model
     )
+
+    if args.final_train:
+        final_model_path = train_final_model(
+            model,
+            full_dataset,
+            epochs,
+            lr,
+            log_path,
+            save_model_path,
+            device,
+            test_dataset=test_dataset,
+            batch_size=batch_size,
+            weight_decay=args.weight_decay,
+            gradient_clip_norm=args.gradient_clip_norm,
+            scheduler_factor=args.scheduler_factor,
+            scheduler_patience=args.scheduler_patience,
+            wandb_config=wandb_config,
+            run_id=run_id,
+        )
+        # Mock best_fold_info to keep the rest of the flow working
+        best_fold_info = {
+            'best_fold_num': 'final_train',
+            'best_val_loss': 0.0,
+            'best_model_path': final_model_path
+        }
+    else:
+        best_fold_info = train_model(
+            model,
+            full_dataset,
+            epochs,
+            lr,
+            log_path,
+            save_model_path,
+            device,
+            num_folds,
+            args.save_best_model,
+            batch_size=batch_size,
+            early_stopping_patience=early_patience,
+            weight_decay=args.weight_decay,
+            gradient_clip_norm=args.gradient_clip_norm,
+            scheduler_factor=args.scheduler_factor,
+            scheduler_patience=args.scheduler_patience,
+            wandb_config=wandb_config,
+            run_id=run_id,
+        )
 
     # === Final Test Set Evaluation ===
     if not args.no_test_inference and args.save_best_model:
         print("\n" + "="*50)
         print("Running final test set evaluation...")
         print("="*50)
-        
-        # Paths
-        test_dir = os.path.join(os.path.dirname(train_dir), 'test-dist')
-        test_audio_csv = os.path.join(test_dir, 'audio_features_test.csv')
-        test_embedding_csv = os.path.join(test_dir, 'audio_embeddings_test.csv')
-        test_labels_csv = 'task1.csv'  # In project root
-        
-        # Create test dataset
-        from data_loader import create_test_dataset
-        test_dataset = create_test_dataset(
-            test_dir=test_dir,
-            audio_csv=test_audio_csv,
-            embedding_csv=test_embedding_csv,
-            labels_csv=test_labels_csv,
-            tokenizer_model=text_embedding_model
-        )
         
         # Print test set info
         print(f"Test set size: {len(test_dataset)}")

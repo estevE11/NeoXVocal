@@ -28,6 +28,48 @@ def _print_split_stats(prefix: str, y: np.ndarray) -> None:
     print(f'{prefix}: n={total} | Control(0)={n_neg} ({neg_pct:.1f}%) | ProbableAD(1)={n_pos} ({pos_pct:.1f}%)')
 
 
+def run_inference(model, data_loader, criterion, device, desc='Inference'):
+    """Run a pure forward pass and calculate metrics without any side effects."""
+    model.eval()
+    running_loss = 0.0
+    all_outputs = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for (text_data, audio_data, embedding_data, label) in tqdm(data_loader, desc=desc):
+            text_data = {key: value.to(device) for key, value in text_data.items()}
+            audio_data = audio_data.to(device)
+            embedding_data = embedding_data.to(device)
+            label = label.to(device)
+            
+            outputs = model(text_data, audio_data, embedding_data)
+            loss = criterion(outputs, label.float())
+            
+            running_loss += loss.item()
+            all_outputs.extend(outputs.detach().cpu().numpy())
+            all_labels.extend(label.cpu().numpy())
+            
+    loss_val = running_loss / len(data_loader)
+    predictions = (np.array(all_outputs) > 0).astype(int)
+    acc_val = accuracy_score(np.array(all_labels), predictions)
+    f1_val = f1_score(np.array(all_labels), predictions, average='binary', zero_division=0)
+    report_str = classification_report(
+        np.array(all_labels),
+        predictions,
+        target_names=['Control', 'ProbableAD'],
+        digits=4,
+        zero_division=0,
+    )
+    
+    return {
+        'loss': loss_val,
+        'acc': acc_val,
+        'f1': f1_val,
+        'report': report_str,
+        'predictions': predictions.flatten()
+    }
+
+
 def train_model(
     model,
     full_dataset,
@@ -165,41 +207,17 @@ def train_model(
                 zero_division=0,
             )
 
-            model.eval()
-            val_running_loss = 0.0
-            all_val_outputs = []
-            all_val_labels = []
-            with torch.no_grad():
-                for (text_data, audio_data, embedding_data, label) in tqdm(
-                    val_loader, desc=f'Fold {fold+1}, Epoch {epoch+1}/{epochs} - Validation'
-                ):
-                    text_data = {key: value.to(device) for key, value in text_data.items()}
-                    audio_data = audio_data.to(device)
-                    embedding_data = embedding_data.to(device)
-                    label = label.to(device)
-
-                    outputs = model(text_data, audio_data, embedding_data)
-                    print("val--------------------------------")
-                    print(outputs)
-                    print(label)
-                    print("--------------------------------")
-                    loss = criterion(outputs, label.float())
-
-                    val_running_loss += loss.item()
-                    all_val_outputs.extend(outputs.detach().cpu().numpy())
-                    all_val_labels.extend(label.cpu().numpy())
-
-            val_loss = val_running_loss / len(val_loader)
-            val_predictions = (np.array(all_val_outputs) > 0).astype(int)
-            val_accuracy = accuracy_score(np.array(all_val_labels), val_predictions)
-            val_f1 = f1_score(np.array(all_val_labels), val_predictions, average='binary', zero_division=0)
-            val_report = classification_report(
-                np.array(all_val_labels),
-                val_predictions,
-                target_names=['Control', 'ProbableAD'],
-                digits=4,
-                zero_division=0,
+            val_metrics = run_inference(
+                model, 
+                val_loader, 
+                criterion, 
+                device, 
+                desc=f'Fold {fold+1}, Epoch {epoch+1}/{epochs} - Validation'
             )
+            val_loss = val_metrics['loss']
+            val_accuracy = val_metrics['acc']
+            val_f1 = val_metrics['f1']
+            val_report = val_metrics['report']
 
             scheduler.step(val_loss)
             current_lr = optimizer.param_groups[0]['lr']
@@ -270,6 +288,171 @@ def train_model(
     return best_fold_info
 
 
+def train_final_model(
+    model,
+    full_dataset,
+    epochs,
+    learning_rate,
+    log_path,
+    save_model_path,
+    device,
+    test_dataset=None,
+    batch_size=32,
+    weight_decay=1e-4,
+    gradient_clip_norm=1.0,
+    scheduler_factor=0.5,
+    scheduler_patience=5,
+    wandb_config=None,
+    run_id='',
+):
+    criterion = BCEWithLogitsLoss()
+    if hasattr(full_dataset, 'datasets') and len(getattr(full_dataset, 'datasets', [])) == 2:
+        ad_len = len(full_dataset.datasets[0])
+        cn_len = len(full_dataset.datasets[1])
+        y = np.array([1] * ad_len + [0] * cn_len)
+    else:
+        y = np.zeros(len(full_dataset), dtype=int)
+
+    _print_split_stats('Final Train Dataset', y)
+
+    wandb_run = None
+    if wandb_config is not None:
+        slurm_job_id = wandb_config.get('slurm_job_id', os.environ.get('SLURM_JOB_ID', 'local'))
+        run_name = f"{wandb_config.get('base_run_name', 'neuroxvocal')}_final_train"
+        tags = [f"slurm_job_{slurm_job_id}", "final_train"]
+        if wandb_config.get('run_tag'):
+            tags.append(wandb_config['run_tag'])
+
+        wandb_run = wandb.init(
+            project=wandb_config.get('project'),
+            entity=wandb_config.get('entity'),
+            name=run_name,
+            group=wandb_config.get('group', run_id),
+            mode=wandb_config.get('mode', 'online'),
+            tags=tags,
+            config={
+                **wandb_config.get('config', {}),
+                'mode': 'final_train',
+            },
+            reinit=True,
+        )
+
+    train_loader = torch.utils.data.DataLoader(
+        full_dataset, 
+        batch_size=batch_size, 
+        shuffle=True, 
+        num_workers=0,
+        pin_memory=True
+    )
+    
+    test_loader = None
+    if test_dataset is not None:
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, 
+            batch_size=batch_size, 
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True
+        )
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=scheduler_factor, patience=scheduler_patience)
+    
+    best_test_acc = -1.0
+    best_model_path = None
+    suffix = f'_{run_id}' if run_id else ''
+    last_model_path = f'{save_model_path}{suffix}_final.pth'
+    final_best_model_path = f'{save_model_path}{suffix}_final_best.pth'
+
+    for epoch in range(epochs):
+        model.train()
+        running_loss = 0.0
+        all_train_outputs = []
+        all_train_labels = []
+
+        for (text_data, audio_data, embedding_data, label) in tqdm(
+            train_loader, desc=f'Final Train - Epoch {epoch+1}/{epochs}'
+        ):
+            optimizer.zero_grad()
+            text_data = {key: value.to(device) for key, value in text_data.items()}
+            audio_data = audio_data.to(device)
+            embedding_data = embedding_data.to(device)
+            label = label.to(device)
+
+            outputs = model(text_data, audio_data, embedding_data)
+            loss = criterion(outputs, label.float())
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip_norm)
+            optimizer.step()
+
+            running_loss += loss.item()
+            all_train_outputs.extend(outputs.detach().cpu().numpy())
+            all_train_labels.extend(label.cpu().numpy())
+
+        train_loss = running_loss / len(train_loader)
+        train_predictions = (np.array(all_train_outputs) > 0).astype(int)
+        train_accuracy = accuracy_score(np.array(all_train_labels), train_predictions)
+        train_f1 = f1_score(np.array(all_train_labels), train_predictions, average='binary', zero_division=0)
+
+        scheduler.step(train_loss)
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        log_dict = {
+            'epoch': epoch + 1,
+            'lr': current_lr,
+            'train/loss': train_loss,
+            'train/acc': train_accuracy,
+            'train/f1': train_f1,
+        }
+        
+        log_str = f"Final Train, Epoch {epoch+1}, Train Loss: {train_loss:.4f}"
+        
+        if test_loader is not None:
+            test_metrics = run_inference(
+                model, 
+                test_loader, 
+                criterion, 
+                device, 
+                desc=f'Final Train - Epoch {epoch+1}/{epochs} - Test Eval'
+            )
+            log_dict.update({
+                'test/loss': test_metrics['loss'],
+                'test/acc': test_metrics['acc'],
+                'test/f1': test_metrics['f1'],
+            })
+            log_str += f", Test Loss: {test_metrics['loss']:.4f}, Test Acc: {test_metrics['acc']:.4f}, Test F1: {test_metrics['f1']:.4f}"
+            
+            if test_metrics['acc'] > best_test_acc:
+                best_test_acc = test_metrics['acc']
+                best_model_path = final_best_model_path
+                if isinstance(model, nn.DataParallel):
+                    torch.save(model.module.state_dict(), best_model_path)
+                else:
+                    torch.save(model.state_dict(), best_model_path)
+                if wandb_run is not None:
+                    wandb_run.save(best_model_path)
+
+        if wandb_run is not None:
+            wandb_run.log(log_dict)
+
+        with open(log_path, 'a') as f:
+            f.write(log_str + "\n")
+
+        print(log_str)
+
+    if isinstance(model, nn.DataParallel):
+        torch.save(model.module.state_dict(), last_model_path)
+    else:
+        torch.save(model.state_dict(), last_model_path)
+    
+    if wandb_run is not None:
+        wandb_run.save(last_model_path)
+        wandb_run.save(log_path)
+        wandb.finish()
+
+    return best_model_path if best_model_path else last_model_path
+
+
 def evaluate_on_test_set(model, test_dataset, best_model_path, device, batch_size, wandb_config, run_id, results_dir):
     """Evaluate best model on test set and log to wandb"""
     criterion = BCEWithLogitsLoss()
@@ -280,7 +463,6 @@ def evaluate_on_test_set(model, test_dataset, best_model_path, device, batch_siz
     else:
         model.load_state_dict(torch.load(best_model_path))
     
-    model.eval()
     test_loader = torch.utils.data.DataLoader(
         test_dataset, 
         batch_size=batch_size, 
@@ -290,36 +472,17 @@ def evaluate_on_test_set(model, test_dataset, best_model_path, device, batch_siz
     )
     
     # Run inference
-    test_loss = 0.0
-    all_outputs = []
-    all_labels = []
-    all_patient_ids = []
-    
-    with torch.no_grad():
-        for (text_data, audio_data, embedding_data, label) in tqdm(test_loader, desc='Test Inference'):
-            text_data = {key: value.to(device) for key, value in text_data.items()}
-            audio_data = audio_data.to(device)
-            embedding_data = embedding_data.to(device)
-            label = label.to(device)
-            
-            outputs = model(text_data, audio_data, embedding_data)
-            loss = criterion(outputs, label.float())
-            
-            test_loss += loss.item()
-            all_outputs.extend(outputs.detach().cpu().numpy())
-            all_labels.extend(label.cpu().numpy())
-    
-    # Calculate metrics
-    test_loss = test_loss / len(test_loader)
-    predictions = (np.array(all_outputs) > 0).astype(int)
-    test_acc = accuracy_score(np.array(all_labels), predictions)
-    test_f1 = f1_score(np.array(all_labels), predictions, average='binary', zero_division=0)
+    metrics = run_inference(model, test_loader, criterion, device, desc='Test Inference')
+    test_loss = metrics['loss']
+    test_acc = metrics['acc']
+    test_f1 = metrics['f1']
+    predictions = metrics['predictions']
     
     # Save predictions CSV
     test_data_df = test_dataset.data
     predictions_df = pd.DataFrame({
         'ID': test_data_df['patient_id'].values,
-        'Prediction': predictions.flatten()
+        'Prediction': predictions
     })
     predictions_csv_path = os.path.join(results_dir, f'test_predictions_{run_id}.csv')
     predictions_df.to_csv(predictions_csv_path, index=False)

@@ -59,26 +59,25 @@ srun python -u src/train/main.py \
   --epochs 200 \
   --lr 5e-5 \
   --num_folds 5 \
+  --batch_size 16 \
+  --epochs 200 \
+  --lr 5e-5 \
+  --num_folds 5 \
   --early_stopping_patience 20 \
-  --weight_decay 1e-3 \
+  --weight_decay 1e-4 \
   --text_embedding_model 'microsoft/deberta-v3-base' \
+  --freeze_text_model_layers 4 \
   --transformer_num_layers 2 \
   --transformer_num_heads 8 \
-  --transformer_dropout 0.4 \
+  --transformer_dropout 0.35 \
   --classifier_hidden_layers 1 \
   --classifier_hidden_width 384 \
-  --classifier_dropout 0.5 \
-  --classifier_activation gelu \
+  --classifier_dropout 0.4 \
+  --pooling_strategy "mean" \
   --wandb_project "$WANDB_PROJECT" \
   ${WANDB_ENTITY:+--wandb_entity "$WANDB_ENTITY"} \
   --wandb_mode "$WANDB_MODE" \
   --audio_embedding_model "$AUDIO_EMBEDDING_MODEL" \
   --asr_model "$ASR_MODEL" \
-  --cross_attention_mode gated_bidirectional \
-  --cross_attention_placement before \
-  --cross_attention_num_heads 4 \
-  --cross_attention_num_layers 2 \
-  --cross_attention_dropout 0.3 \
-  --cross_attention_gate_init 0.5 \
-  --run_tag "xattn_gated_refined"
+  --run_tag "baseline_mean_pooling"
 

@@ -126,6 +126,9 @@ class TestDistDataset(Dataset):
             max_length=self.max_length,
             return_tensors='pt',
         )
+        
+        # Squeeze out the batch dimension added by return_tensors='pt'
+        text_tokens = {key: value.squeeze(0) for key, value in text_tokens.items()}
 
         audio_feature_columns = [col for col in self.audio_data.columns if col not in ('patient_id', 'class')]
         embedding_feature_columns = [col for col in self.embedding_data.columns if col != 'patient_id']
